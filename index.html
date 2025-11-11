@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Courtesy Call Tracker</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  </head>
+
+  <body class="bg-gray-50 text-gray-900">
+    <div id="root" class="p-6"></div>
+
+    <script type="text/babel">
+
+      const { useState } = React;
+
+      function App() {
+        const [user, setUser] = useState(null);
+        const [sheetData, setSheetData] = useState([]);
+
+        if (!user) return <Login onLogin={setUser} />;
+
+        return (
+          <div className="max-w-6xl mx-auto">
+            <h1 className="text-2xl font-semibold mb-4">Courtesy Call Tracker</h1>
+            <UploadExcel onData={setSheetData} />
+            {sheetData.length > 0 && <DataGrid data={sheetData} user={user} />}
+          </div>
+        );
+      }
+
+      function Login({ onLogin }) {
+        const [token, setToken] = useState("");
+
+        const handleLogin = () => {
+          if (!token) {
+            alert("Please enter a GitHub personal access token to continue.");
+            return;
+          }
+          onLogin(token);
+        };
+
+        return (
+          <div className="h-screen flex flex-col items-center justify-center bg-gray-100">
+            <h2 className="text-3xl mb-4 font-semibold">Login to Continue</h2>
+            <input
+              type="password"
+              placeholder="Enter GitHub Personal Access Token"
+              className="border p-2 rounded w-80 mb-4"
+              onChange={(e) => setToken(e.target.value)}
+            />
+            <button
+              onClick={handleLogin}
+              className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+            >
+              Continue
+            </button>
+          </div>
+        );
+      }
+
+      function UploadExcel({ onData }) {
+        const handleFile = async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const data = await file.arrayBuffer();
+          const workbook = XLSX.read(data, { type: "array" });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const json = XLSX.utils.sheet_to_json(sheet);
+          onData(json);
+        };
+
+        return (
+          <div className="my-4">
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleFile}
+              className="border p-2 rounded"
+            />
+          </div>
+        );
+      }
+
+      function DataGrid({ data, user }) {
+        const [rows, setRows] = useState(data);
+
+        const handleChange = (index, field, value) => {
+          const updated = [...rows];
+          updated[index][field] = value;
+          setRows(updated);
+        };
+
+        const exportChanges = () => {
+          const worksheet = XLSX.utils.json_to_sheet(rows);
+          const workbook = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(workbook, worksheet, "CourtesyCalls");
+          XLSX.writeFile(workbook, "updated_courtesy_calls.xlsx");
+        };
+
+        const pushToGitHub = async () => {
+          const repoOwner = prompt("Enter your GitHub username:");
+          const repoName = prompt("Enter your GitHub data repo name (e.g. courtesy-call-tracker-data):");
+          const filePath = "courtesy_calls.json";
+          const token = user;
+
+          const content = btoa(JSON.stringify(rows, null, 2));
+          const headers = { Authorization: `token ${token}`, "Content-Type": "application/json" };
+
+          const res = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`, { headers });
+          const existing = await res.json();
+
+          await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              message: `Courtesy call data update`,
+              content,
+              sha: existing.sha,
+            }),
+          });
+
+          alert("Changes committed to GitHub successfully!");
+        };
+
+        return (
+          <div>
+            <table className="min-w-full border mt-4 text-sm">
+              <thead>
+                <tr className="bg-blue-100">
+                  {Object.keys(rows[0]).map((key) => (
+                    <th key={key} className="border px-3 py-1 text-left">{key}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    {Object.keys(r).map((k) => (
+                      <td key={k} className="border px-3 py-1">
+                        <input
+                          value={r[k]}
+                          onChange={(e) => handleChange(i, k, e.target.value)}
+                          className="w-full bg-transparent focus:outline-none"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="mt-4 flex gap-3">
+              <button
+                onClick={exportChanges}
+                className="bg-green-600 text-white px-4 py-2 rounded"
+              >
+                Download Excel
+              </button>
+              <button
+                onClick={pushToGitHub}
+                className="bg-gray-800 text-white px-4 py-2 rounded"
+              >
+                Commit to GitHub
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
