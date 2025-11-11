@@ -1,0 +1,185 @@
+// courtesy-call-tracker project
+// React + Tailwind web tool to manage Courtesy Call Excel system (GitHub-based, no Firebase)
+
+// === public/index.html ===
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Courtesy Call Tracker</title>
+    <link href="/dist/output.css" rel="stylesheet">
+  </head>
+  <body class="bg-gray-50 text-gray-900">
+    <div id="root"></div>
+    <script type="module" src="/src/App.jsx"></script>
+  </body>
+</html>
+
+// === src/App.jsx ===
+import React, { useState } from 'react';
+import UploadExcel from './components/UploadExcel';
+import DataGrid from './components/DataGrid';
+import Login from './components/Login';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [sheetData, setSheetData] = useState([]);
+
+  if (!user) return <Login onLogin={setUser} />;
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <h1 className="text-2xl font-semibold mb-4">Courtesy Call Tracker</h1>
+      <UploadExcel onData={setSheetData} />
+      {sheetData.length > 0 && <DataGrid data={sheetData} user={user} />}
+    </div>
+  );
+}
+
+// === src/components/Login.jsx ===
+import React from 'react';
+
+export default function Login({ onLogin }) {
+  const handleLogin = async () => {
+    const clientId = process.env.REACT_APP_GITHUB_CLIENT_ID || window.GITHUB_CLIENT_ID;
+    if (!clientId) {
+      alert('GitHub Client ID not set. Please configure environment variables.');
+      return;
+    }
+    const redirectUri = window.location.origin;
+    window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo,user&redirect_uri=${redirectUri}`;
+  };
+
+  return (
+    <div className="h-screen flex flex-col items-center justify-center bg-gray-100">
+      <h2 className="text-3xl mb-4 font-semibold">Login to Continue</h2>
+      <button onClick={handleLogin} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
+        Login with GitHub
+      </button>
+    </div>
+  );
+}
+
+// === src/components/UploadExcel.jsx ===
+import React from 'react';
+import * as XLSX from 'xlsx';
+
+export default function UploadExcel({ onData }) {
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(sheet);
+    onData(json);
+  };
+
+  return (
+    <div className="my-4">
+      <input type="file" accept=".xlsx,.xls" onChange={handleFile} className="border p-2 rounded" />
+    </div>
+  );
+}
+
+// === src/components/DataGrid.jsx ===
+import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
+import { commitChangesToGitHub } from '../utils/github';
+
+export default function DataGrid({ data, user }) {
+  const [rows, setRows] = useState(data);
+
+  const handleChange = (index, field, value) => {
+    const updated = [...rows];
+    updated[index][field] = value;
+    setRows(updated);
+  };
+
+  const exportChanges = () => {
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "CourtesyCalls");
+    XLSX.writeFile(workbook, "updated_courtesy_calls.xlsx");
+  };
+
+  const pushToGitHub = async () => {
+    await commitChangesToGitHub(rows, user);
+    alert("Changes committed to GitHub successfully!");
+  };
+
+  return (
+    <div>
+      <table className="min-w-full border mt-4">
+        <thead>
+          <tr className="bg-blue-100">
+            {Object.keys(rows[0]).map((key) => (
+              <th key={key} className="border px-3 py-1">{key}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {Object.keys(r).map((k) => (
+                <td key={k} className="border px-3 py-1">
+                  <input
+                    value={r[k]}
+                    onChange={(e) => handleChange(i, k, e.target.value)}
+                    className="w-full bg-transparent"
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="mt-4 flex gap-3">
+        <button onClick={exportChanges} className="bg-green-600 text-white px-4 py-2 rounded">Download Excel</button>
+        <button onClick={pushToGitHub} className="bg-gray-800 text-white px-4 py-2 rounded">Commit to GitHub</button>
+      </div>
+    </div>
+  );
+}
+
+// === src/utils/github.js ===
+export async function commitChangesToGitHub(data, user) {
+  const repoOwner = process.env.REACT_APP_GITHUB_USERNAME || window.GITHUB_USERNAME || "YOUR_GITHUB_USERNAME";
+  const repoName = process.env.REACT_APP_GITHUB_REPO || window.GITHUB_REPO || "courtesy-call-tracker-data";
+  const filePath = "courtesy_calls.json";
+  const token = process.env.REACT_APP_GITHUB_TOKEN || window.GITHUB_TOKEN;
+
+  if (!token) {
+    alert('GitHub token missing. Set REACT_APP_GITHUB_TOKEN or define window.GITHUB_TOKEN');
+    return;
+  }
+
+  const content = btoa(JSON.stringify(data, null, 2));
+
+  const res = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`, {
+    headers: { Authorization: `token ${token}` },
+  });
+
+  const existing = await res.json();
+
+  await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/contents/${filePath}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `token ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message: `Update courtesy calls by ${user}`,
+      content,
+      sha: existing.sha,
+    }),
+  });
+}
+
+// === .env ===
+REACT_APP_GITHUB_CLIENT_ID=your_client_id
+REACT_APP_GITHUB_TOKEN=your_personal_access_token
+REACT_APP_GITHUB_USERNAME=your_username
+REACT_APP_GITHUB_REPO=courtesy-call-tracker-data
